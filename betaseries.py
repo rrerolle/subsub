@@ -23,15 +23,13 @@ SERIES = [
 SCORE_THRESHOLD = 0.8
 LANGUAGE_ORDER = ['VF', 'VO']
 EXCLUDED_TAGS = ['.TAG.', '.ass', '.txt']
-KEYWORDS = {
-    'DIMENSION',
-    'IMMERSE',
-    'ORENJI',
-    '720P',
-    'WEB-DL',
-    'X264',
-    'H.264',
-}
+KEYWORDS = [
+    '0TV', '2HD', '720p', 'ASAP', 'CAMERA', 'CRiMSON', 'CT', 'CTU', 'Caph',
+    'DIMENSION', 'FQM', 'FQM', 'H.264', 'HALCYON', 'HDTV', 'HV', 'IMMERSE',
+    'LOKi', 'LOL', 'MiNT', 'NoTV', 'OMiCRON', 'ORENJI', 'RiVER', 'SAiNTS',
+    'SDH', 'SFM', 'STFC', 'SYS', 'TLA', 'WEB-DL', 'XOR', 'XViD', 'YesTV', 'aAF',
+    'x264',
+]
 
 class UrlGrabber(object):
     def __init__(self, url, handle_cookies=False, debug=False):
@@ -56,27 +54,37 @@ class UrlGrabber(object):
         request =  urllib2.Request(self.url)
         handlers = []
         if self.handle_cookies:
-            handlers.append(urllib2.HTTPCookieProcessor(cookielib.LWPCookieJar()))
+            handlers.append(
+                urllib2.HTTPCookieProcessor(cookielib.LWPCookieJar()),
+            )
         if self.debug:
-            handlers.append(urllib2.HTTPHandler(debuglevel=1))
-
+            handlers.append(
+                urllib2.HTTPHandler(debuglevel=1),
+            )
         opener = urllib2.build_opener(*handlers)
-
         self._stream = opener.open(request)
 
     def close(self):
         self._stream.close()
 
-    def download(self, filename):
-        out_stream = open(filename, 'w')
+    def download(self, dest_filename):
         self.open()
-        out_stream.write(self.read())
-        self.close()
-        out_stream.close()
+        try:
+            with open(dest_filename, 'w') as out_stream:
+                out_stream.write(self.read())
+        except IOError, exc:
+            print 'Error while writing file %s: %s' % (
+                dest_filename,
+                str(exc),
+            )
+        finally:
+            out_stream.close()
+            self.close()
 
 class Subtitle(object):
     def __init__(self, movie_filename):
-        self.movie_filename = movie_filename
+        self.movie_filename = os.path.basename(movie_filename)
+        self.movie_dirname = os.path.dirname(movie_filename)
         self.show = ''
         self.season = 0
         self.episode = 0
@@ -129,23 +137,37 @@ class Subtitle(object):
         return False
 
     def download(self):
-        prefix = os.path.splitext(self.movie_filename)[0] 
+        dest_prefix = os.path.join(
+            self.movie_dirname,
+            os.path.splitext(self.movie_filename)[0],
+        )
         grabber = UrlGrabber(self.url)
-        print "Downloading %s" % grabber.filename
+        srt_filename = dest_prefix + '.srt'
+        print 'Downloading %s to %s' % (
+            grabber.filename,
+            srt_filename,
+        )
         if '.zip' in grabber.filename:
-            grabber = grabber.download(prefix + '.zip')
-            zip_object = zipfile.ZipFile(prefix + '.zip')
+            zip_filename = dest_prefix + '.zip'
+            grabber = grabber.download(zip_filename)
+            zip_object = zipfile.ZipFile(zip_filename)
             namelist = zip_object.namelist()
             if self.filename not in namelist:
-                print 'ERROR, %S not in zip' % self.filename
+                print 'ERROR, %s not in zip' % self.filename
                 return
             sub_data = zip_object.read(self.filename)
-            with open(prefix + ".srt", 'w') as srt_file:
-                srt_file.write(sub_data)
+            try:
+                with open(srt_filename, 'w') as srt_file:
+                    srt_file.write(sub_data)
+            except IOError, exc:
+                print 'Error while writing file %s: %s' % (
+                    filename,
+                    str(exc),
+                )
             zip_object.close()
-            os.remove(prefix + ".zip")
+            os.remove(zip_filename)
         else:
-            grabber.download(prefix + '.srt')
+            grabber.download(srt_filename)
 
 class BetaSeries(object):
     def __init__(self, key=BETASERIES_KEY):
@@ -164,7 +186,7 @@ class BetaSeries(object):
         result = self.query(
             '/shows/search.json', {
                 'title': name,
-            }
+            },
         )
         return result.get('shows', {}).get('0', {}).get('url', '')
 
@@ -177,7 +199,7 @@ class BetaSeries(object):
         return parser
 
     def get_subtitles(self, movie_filename):
-        parser = self.parse(movie_filename)
+        parser = self.parse(os.path.basename(movie_filename))
         if not parser.valid:
             return []
         url = self.get_show_url(parser.name)
@@ -246,8 +268,8 @@ class BetaSeries(object):
 files = [
 #    "The Good Wife S03E01 720p WEB-DL DD5.1 H.264-NFHD.mkv",
 #    "The Good Wife S03E02 PROPER 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-    "The Good Wife S03E04 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-    "The Good Wife S03E05 720p WEB-DL DD5.1 H.264-NFHD.mkv",
+    "/tmp/The Good Wife S03E04 720p WEB-DL DD5.1 H.264-NFHD.mkv",
+    "/tmp/The Good Wife S03E05 720p WEB-DL DD5.1 H.264-NFHD.mkv",
 #    "The Good Wife S03E06 720p WEB-DL DD5.1 H.264-NFHD.mkv",
 #    "The Good Wife S03E07 720p WEB-DL DD5.1 H.264-NFHD.mkv",
 #    "The Good Wife S03E08 720p WEB-DL DD5.1 H.264-NFHD.mkv",
@@ -288,13 +310,12 @@ files = [
 #    "The.Good.Wife.S03E02.720p.HDTV.X264.DIMENSION.mkv",
 ]
 
-
-beta = BetaSeries()
-
-for filename in files:
-    print ' -- ', filename
-    best = beta.find_best(filename)
-    print best
-    best.download()
-    from time import sleep
-    sleep(1)
+if __name__ == '__main__':
+    beta = BetaSeries()
+    for filename in files:
+        print ' -- ', filename
+        best = beta.find_best(filename)
+        print best
+        best.download()
+        from time import sleep
+        sleep(1)
