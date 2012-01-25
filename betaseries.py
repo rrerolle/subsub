@@ -5,13 +5,19 @@ import urllib2, urllib
 import cookielib
 import json
 import difflib
+import sys
 import os
 import zipfile
-
-from flexget.utils.titles.series import SeriesParser
+try:
+    from flexget.utils.titles.series import SeriesParser
+except ImportError:
+    print 'Please install flexget (sudo pip install flexget)'
+    sys.exit(1)
 
 BETASERIES_URL = 'http://api.betaseries.com'
 BETASERIES_KEY = 'ca7b28296588'
+
+# Series to handle
 SERIES = [
     'The Good Wife',
     'Californication',
@@ -20,14 +26,21 @@ SERIES = [
     'Breaking Bad',
     'Dexter',
 ]
+# String similarity threshold to consider a match
 SCORE_THRESHOLD = 0.8
+# Specify the preferred language here
 LANGUAGE_ORDER = ['VF', 'VO']
+# Discard any subtitle with one of those tags
 EXCLUDED_TAGS = ['.TAG.', '.ass', '.txt']
-KEYWORDS = [
-    '0TV', '2HD', '720p', 'ASAP', 'CAMERA', 'CRiMSON', 'CT', 'CTU', 'Caph',
-    'DIMENSION', 'FQM', 'FQM', 'H.264', 'HALCYON', 'HDTV', 'HV', 'IMMERSE',
-    'LOKi', 'LOL', 'MiNT', 'NoTV', 'OMiCRON', 'ORENJI', 'RiVER', 'SAiNTS',
-    'SDH', 'SFM', 'STFC', 'SYS', 'TLA', 'WEB-DL', 'XOR', 'XViD', 'YesTV', 'aAF',
+# Scene release groups
+GROUP_KEYWORDS = [
+    'aAF', '0TV', '2HD', 'ASAP', 'CRiMSON', 'CTU', 'Caph', 'DIMENSION', 'FQM',
+    'IMMERSE', 'LOKi', 'LOL', 'NoTV', 'OMiCRON', 'ORENJI', 'RiVER', 'SFM',
+    'SYS', 'TLA', 'XOR', 'YesTV',
+]
+# Quality related tags
+QUALITY_KEYWORDS = [
+    '720p', 'AC3', 'DVDRIP', 'DVDSCR', 'H.264', 'HDTV', 'HR' 'WEB-DL', 'XViD',
     'x264',
 ]
 
@@ -38,17 +51,6 @@ class UrlGrabber(object):
         self.debug = debug
         self._stream = None
         self.open()
-
-    @property
-    def filename(self):
-        return urllib2.unquote(os.path.basename(
-            self._stream.geturl()))
-
-    def read(self):
-        return self._stream.read()
-
-    def readlines(self):
-        return self._stream.readlines()
 
     def open(self):
         request =  urllib2.Request(self.url)
@@ -67,6 +69,17 @@ class UrlGrabber(object):
     def close(self):
         self._stream.close()
 
+    @property
+    def filename(self):
+        return urllib2.unquote(os.path.basename(
+            self._stream.geturl()))
+
+    def read(self):
+        return self._stream.read()
+
+    def readlines(self):
+        return self._stream.readlines()
+
     def download(self, dest_filename):
         self.open()
         try:
@@ -78,8 +91,8 @@ class UrlGrabber(object):
                 str(exc),
             )
         finally:
-            out_stream.close()
             self.close()
+
 
 class Subtitle(object):
     def __init__(self, movie_filename):
@@ -93,15 +106,23 @@ class Subtitle(object):
         self.quality = 0
         self.score = 0.0
         self.language = ''
+        self.group_keyword_count = 0
+        self.quality_keyword_count = 0
         self.keyword_count = 0
 
     def __repr__(self):
-        return '[Subtitle file %s, quality:%d, score:%0.2f, keywords:%d, %s]' % (
+        return (' * Filename: %s \n'
+                ' * Languages: %s\n'
+                ' * Betaseries rating: %d\n'
+                ' * Filename similarity: %0.2f\n'
+                ' * Scene group keyword matches: %d\n'
+                ' * Video quality keyword matches: %d') % (
             self.filename,
+            self.language,
             self.quality,
             self.score,
-            self.keyword_count,
-            self.language,
+            self.group_keyword_count,
+            self.quality_keyword_count,
         )
 
     def update_score(self):
@@ -117,18 +138,22 @@ class Subtitle(object):
     def update_keyword_count(self):
         clean_filename = self.clean_string(self.filename)
         clean_movie_filename = self.clean_string(self.movie_filename)
-        for keyword in KEYWORDS:
+        for keyword in GROUP_KEYWORDS + QUALITY_KEYWORDS:
             keyword_full = self.clean_string(' %s ' % keyword)
             keyword_short = self.clean_string(' %s ' % keyword[:3])
             stop = False
             for j in [keyword_full, keyword_short]:
                 for k in [keyword_full, keyword_short]:
                     if j in clean_movie_filename and k in clean_filename:
-                        self.keyword_count += 1
+                        if keyword in GROUP_KEYWORDS:
+                            self.group_keyword_count += 1
+                        elif keyword in QUALITY_KEYWORDS:
+                            self.quality_keyword_count += 1
                         stop = True
                         break
                 if stop:
                     break
+        self.keyword_count = self.quality_keyword_count + self.group_keyword_count
 
     def has_forbidden_tags(self):
         for tag in EXCLUDED_TAGS:
@@ -143,13 +168,10 @@ class Subtitle(object):
         )
         grabber = UrlGrabber(self.url)
         srt_filename = dest_prefix + '.srt'
-        print 'Downloading %s to %s' % (
-            grabber.filename,
-            srt_filename,
-        )
+        print ' >>> Downloading to: %s' % srt_filename
         if '.zip' in grabber.filename:
             zip_filename = dest_prefix + '.zip'
-            grabber = grabber.download(zip_filename)
+            grabber.download(zip_filename)
             zip_object = zipfile.ZipFile(zip_filename)
             namelist = zip_object.namelist()
             if self.filename not in namelist:
@@ -217,7 +239,7 @@ class BetaSeries(object):
             if 'content' in result:
                 filenames = result['content'].values()
             else:
-                filenames = [result.get('file')]
+                filenames = [result['file']]
             for filename in filenames:
                 subtitle = Subtitle(movie_filename)
                 subtitle.filename = filename
@@ -240,9 +262,12 @@ class BetaSeries(object):
 
     def find_best(self, filename):
         subtitles = self.get_subtitles(filename)
+        if not subtitles:
+            return None
         for language in LANGUAGE_ORDER:
             best_subtitles =  [s for s in subtitles
-                               if s.language == language]
+                               if s.language == language
+                               and s.quality > 0]
             max_count = max(s.keyword_count for s in best_subtitles)
             best_subtitles = [s for s in subtitles
                               if s.language == language
@@ -265,57 +290,19 @@ class BetaSeries(object):
             if best_subtitles:
                 return best_subtitles[-1]
 
-files = [
-#    "The Good Wife S03E01 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-#    "The Good Wife S03E02 PROPER 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-    "/tmp/The Good Wife S03E04 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-    "/tmp/The Good Wife S03E05 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-#    "The Good Wife S03E06 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-#    "The Good Wife S03E07 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-#    "The Good Wife S03E08 720p WEB-DL DD5.1 H.264-NFHD.mkv",
-#    "Californication.S05E01.720p.HDTV.x264-IMMERSE.mkv",
-#    "Desperate Housewives - 8x12 - What's the Good of Being Good.mkv",
-#    "Dexter.S06E01.720p.HDTV.x264-IMMERSE.mkv",
-#    "Breaking.Bad.S04E07.VOSTFR.720p.WEB-DL.DD5.1.H.264-GKS.mkv",
-#    "Breaking.Bad.S04E08.Hermanos.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Breaking.Bad.S04E09.Bug.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Breaking.Bad.S04E10.VOSTFR.720p.WEB-DL.DD51.H264-SLT.mkv",
-#    "Breaking.Bad.S04E12.End_Times.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Breaking.Bad.S04E13.Face_Off.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Californication.S05E02.720p.HDTV.X264-DIMENSION.mkv",
-#    "Damages.S04E06.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Damages.S04E07.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Damages.S04E08.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Damages.S04E09.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Damages.S04E10.720p.WEB-DL.DD5.1.H.264-TB.mkv",
-#    "Desperate.Housewives.S08E01.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E02.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E03.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E04.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E07.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E08.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E09.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E10.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E11.720p.HDTV.X264-DIMENSION.mkv",
-#    "Desperate.Housewives.S08E12.720p.HDTV.X264-DIMENSION.mkv",
-#    "Dexter.S06E01.REPACK.720p.HDTV.x264-IMMERSE.mkv",
-#    "Dexter.S06E02.720p.HDTV.x264-ORENJI.mkv",
-#    "Dexter.S06E03.720p.HDTV.x264-IMMERSE.mkv",
-#    "Dexter.S06E04.720p.HDTV.X264-DIMENSION.mkv",
-#    "Dexter.S06E06.PROPER.720p.HDTV.X264-DIMENSION.mkv",
-#    "Dexter.S06E07.720p.HDTV.X264-DIMENSION.mkv",
-#    "Dexter.S06E09.720p.HDTV.X264-DIMENSION.mkv",
-#    "Dexter.S06E10.720p.HDTV.x264-IMMERSE.mkv",
-#    "Dexter.S06E12.FINAL.FASTSUB.VOSTFR.HDTV.720P.X264-ATeam.mkv",
-#    "The.Good.Wife.S03E02.720p.HDTV.X264.DIMENSION.mkv",
-]
 
 if __name__ == '__main__':
     beta = BetaSeries()
-    for filename in files:
-        print ' -- ', filename
-        best = beta.find_best(filename)
-        print best
-        best.download()
-        from time import sleep
-        sleep(1)
+    if len(sys.argv) > 1:
+        for filename in sys.argv[1:]:
+            print ' >>> Checking', filename
+            best = beta.find_best(filename)
+            if best:
+                print ' >>> Found best subtitle:'
+                print best
+                best.download()
+            else:
+                print ' >>> No subtitles found.'
+    else:
+        print 'Please specify at least one file'
+
