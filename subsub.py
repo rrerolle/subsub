@@ -41,7 +41,7 @@ GROUP_KEYWORDS = [
 # Quality related tags
 QUALITY_KEYWORDS = [
     '720p', 'AC3', 'DVDRIP', 'DVDSCR', 'H.264', 'HDTV', 'HR' 'WEB-DL', 'XViD',
-    'x264',
+    'x264', 'PROPER', 'REPACK',
 ]
 
 class UrlGrabber(object):
@@ -268,7 +268,7 @@ class BetaSeries(object):
             best_subtitles =  [s for s in subtitles
                                if s.language == language
                                and s.quality > 0]
-            max_count = max(s.keyword_count for s in best_subtitles)
+            max_count = max([s.keyword_count for s in best_subtitles] or [0])
             best_subtitles = [s for s in subtitles
                               if s.language == language
                               and s.keyword_count == max_count]
